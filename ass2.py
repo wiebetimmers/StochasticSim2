@@ -41,9 +41,9 @@ def source(env, number, counter):
         yield env.timeout(t)
 
     print('Mean soj time: ', st.mean(soj_times))
-    sns.displot(soj_times)
-    plt.xlabel('sojourn time')
-    plt.savefig('sojourn_displot_%s.jpg'%CAP)
+    #sns.displot(soj_times)
+    #plt.xlabel('sojourn time')
+    #plt.savefig('sojourn_displot_%s.jpg'%CAP)
 
 def customer(env, name, counter):
     """Customer arrives, is served and leaves."""
@@ -73,14 +73,21 @@ random.seed(RANDOM_SEED)
 env = simpy.Environment()
 
 # Start processes and run
-capacities = [1,2,4]
+capacities = list(range(1,11))
+es_list = []
 for cap in capacities:
     CAP = cap
     print('Bank renege')
     system_load = ARR_RATE / (CAP * SERV_RATE)
+    el = (system_load)/(1-system_load)
+    es = (1/SERV_RATE)/(1-system_load)
     print('System load: ', system_load)
-    print('E(L) = %f' % ((system_load)/(1-system_load)))
-    print('E(S) = %f' % ((1/SERV_RATE)/(1-system_load)))
+    es_list.append(es)
     counter = simpy.Resource(env, capacity=CAP)
     env.process(source(env, NEW_CUSTOMERS, counter))
     env.run()
+
+plt.plot(capacities, es_list)
+plt.xlabel('Capacity')
+plt.ylabel('E(s)')
+plt.savefig('expdecay_sojourningtime.jpg')
