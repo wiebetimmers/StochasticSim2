@@ -6,6 +6,8 @@ from simpy import *
 import simpy
 import seaborn as sns
 import matplotlib.pyplot as plt
+import pickle as pkl
+import pandas as pd
 fig = plt.figure(figsize=(6,4), dpi=300)
 
 # https://medium.com/swlh/simulating-a-parallel-queueing-system-with-simpy-6b7fcb6b1ca1
@@ -79,11 +81,76 @@ def customer(env, counters, serv_dist, name):
         #print('%7.4f %s: Finished' % (env.now, name))
 
 
-# Start processes and run
+def run_simulation(capacities, service_dis):
+    es_list = []
+    wait_list = []
+    # Run the analytical solution once per cap
+    for cap in tqdm(capacities):
+        p = system_load(cap)
+        el = (p) / (1 - p)
+        es = (1 / (SERV_RATE * cap)) / (1 - p)
+        wait_time = es - (1 / (SERV_RATE * cap))
+        print('System load: ', p)
+        print('Mean number customers in system: ', el)
+        print('Mean sojourn time: ', es)
+        print('Mean wait time: ', wait_time)
+        print('Mean service time: ', INTERVAL_SERVICE)
+        print('-------------------')
+        es_list.append(es)
+        wait_list.append(wait_time)
+
+        # Run the simulations for every cap and service dist
+        for sd in service_dis:
+            random.seed(RANDOM_SEED)
+            env = simpy.Environment()
+            counters = []
+            for i in range(cap):
+                counters.append(Resource(env))
+            env.process(source(env, NEW_CUSTOMERS, counters, serv_dist=sd))
+            env.run()
+    return es_list, wait_list
+
+def plot_functions(results, capacities, metrics, service_dis):
+    print('Plotting ....')
+    for met in tqdm(metrics):
+        for cap in capacities:
+            for sd in service_dis:
+                plt.clf()
+                ax = sns.displot(results['M%s%s'%(sd, cap)][met], label='n=%s'%cap)
+                ax.set(xlabel='%s'%met, ylabel=('Frequency'))
+                plt.tight_layout()
+                if not os.path.exists('displots/M%s%s'%(sd, cap)):
+                    os.makedirs('displots/M%s%s'%(sd, cap))
+                plt.savefig('displots/M%s%s/%s_n_%s.jpg' %(sd, cap, met, NEW_CUSTOMERS))
+                plt.close()
+    return
+
+def get_stats(results, capacities, metrics, service_dis):
+    for cap in capacities:
+        for met in metrics:
+            for sd in service_dis:
+                cap_met = results['M%s%s'%(sd, cap)][met]
+                results['M%s%s'%(sd, cap)]['mean_%s' %met] = st.mean(cap_met)
+                results['M%s%s'%(sd, cap)]['max_%s' %met] = max(cap_met)
+                print('mean M%s%s, met %s: %s'%(sd, cap, met, st.mean(cap_met)))
+    file_to_write = open("stats.pickle", "wb")
+    pkl.dump(results, file_to_write)
+    file_to_write.close()
+    return
+
+def make_table(file):
+    infile = open(file, 'rb')
+    stats = pkl.load(infile)
+    df = pd.DataFrame.from_dict(stats)
+    df = df.drop(['wait_times', 'serv_times', 'soj_times'])
+    df2 = df.transpose()
+    print(df2)
+    df2.to_excel("output.xlsx")
+    return
+
+# Define domains to simulate
 capacities = [1, 2, 4]
 service_dis = ['M', 'D', 'H']
-es_list = []
-wait_list = []
 metrics = ['wait_times', 'serv_times', 'soj_times']
 dists = {
     'MM1' : {
@@ -137,59 +204,12 @@ dists = {
         'soj_times' : []
     }}
 
-# Run the analytical solution once per cap
-for cap in tqdm(capacities):
-    p = system_load(cap)
-    el = (p) / (1 - p)
-    es = (1 / (SERV_RATE * cap)) / (1 - p)
-    wait_time = es - (1 / (SERV_RATE * cap))
-    print('System load: ', p)
-    print('Mean number customers in system: ', el)
-    print('Mean sojourn time: ', es)
-    print('Mean wait time: ', wait_time)
-    print('Mean service time: ', INTERVAL_SERVICE)
-    print('-------------------')
-    es_list.append(es)
-    wait_list.append(wait_time)
 
-    # Run the simulations for every cap and service dist
-    for sd in service_dis:
-        random.seed(RANDOM_SEED)
-        env = simpy.Environment()
-        counters = []
-        for i in range(cap):
-            counters.append(Resource(env))
-        env.process(source(env, NEW_CUSTOMERS, counters, serv_dist=sd))
-        env.run()
-
-def plot_functions(results, capacities, metrics, service_dis):
-    print('Plotting ....')
-    for met in tqdm(metrics):
-        for cap in capacities:
-            for sd in service_dis:
-                plt.clf()
-                ax = sns.displot(results['M%s%s'%(sd, cap)][met], label='n=%s'%cap)
-                ax.set(xlabel='%s'%met, ylabel=('Frequency'))
-                plt.tight_layout()
-                if not os.path.exists('displots/M%s%s'%(sd, cap)):
-                    os.makedirs('displots/M%s%s'%(sd, cap))
-                plt.savefig('displots/M%s%s/%s_n_%s.jpg' %(sd, cap, met, NEW_CUSTOMERS))
-                plt.close()
-    return
-
-def get_stats(results, capacities, metrics, service_dis):
-    for cap in capacities:
-        for met in metrics:
-            for sd in service_dis:
-                cap_met = results['M%s%s'%(sd, cap)][met]
-                results['M%s%s'%(sd, cap)]['mean_%s' %met] = st.mean(cap_met)
-                results['M%s%s'%(sd, cap)]['max_%s' %met] = max(cap_met)
-                print('mean M%s%s, met %s: %s'%(sd, cap, met, st.mean(cap_met)))
-    return
-
+# The script subsections, comment out for partial run.
+es_list, wait_list = run_simulation(capacities, service_dis)
 plot_functions(dists, capacities, metrics, service_dis)
 get_stats(dists, capacities, metrics, service_dis)
-
+make_table("stats.pickle")
 
 plt.clf()
 plt.plot(capacities, es_list, label='E(S)')
