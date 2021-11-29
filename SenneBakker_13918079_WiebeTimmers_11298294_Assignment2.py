@@ -10,10 +10,9 @@ import pickle as pkl
 import pandas as pd
 fig = plt.figure(figsize=(6,4), dpi=300)
 
+# sources
 # https://medium.com/swlh/simulating-a-parallel-queueing-system-with-simpy-6b7fcb6b1ca1
 # https://simpy.readthedocs.io/en/latest/examples/bank_renege.html
-
-
 
 RANDOM_SEED = 12345
 NEW_CUSTOMERS = 100000 # Total number of customers
@@ -26,7 +25,7 @@ SERV_RATE = 1/INTERVAL_SERVICE   #mu
 def system_load(n):
     # We assume the same load characteristics for every experiment:
     # This means the arrival rate is set to be n-fold lower.
-    p = (ARR_RATE/n) / (n*SERV_RATE)
+    p = (ARR_RATE*n) / (n*SERV_RATE)
     return p
 
 
