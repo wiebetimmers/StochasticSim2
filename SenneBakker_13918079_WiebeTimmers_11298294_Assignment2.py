@@ -13,9 +13,11 @@ fig = plt.figure(figsize=(6,4), dpi=300)
 # sources
 # https://medium.com/swlh/simulating-a-parallel-queueing-system-with-simpy-6b7fcb6b1ca1
 # https://simpy.readthedocs.io/en/latest/examples/bank_renege.html
+# https://www.programiz.com/dsa/insertion-sort
 
+SAMPLE_SIZE_SIM = 100
 RANDOM_SEED = 12345
-NEW_CUSTOMERS = 100000 # Total number of customers
+NEW_CUSTOMERS = 10000 # Total number of customers
 INTERVAL_CUSTOMERS = 10.0  # Generate new customers roughly every x seconds
 INTERVAL_SERVICE = 9.5 # Service takes roughly 10 seconds of time
 
@@ -29,10 +31,28 @@ def system_load(n):
     return p
 
 
+def insertionsort(array):
+    for step in range(1, len(array)):
+        key = array[step]
+        j = step - 1
+        # Compare key with each element on the left of it until an element smaller than it is found
+        # For descending order, change key<array[j] to key>array[j].
+        while j >= 0 and key < array[j]:
+            array[j + 1] = array[j]
+            j = j - 1
+
+        # Place key at after the element just smaller than it.
+        array[j + 1] = key
+    return array
+
 def source(env, number, counters, serv_dist):
+    sjf_jobs = []
     """Source generates customers randomly"""
     for i in range(number):
-        c = customer(env, counters, serv_dist, name="customer_%s"%i)
+        if serv_dist == 'MM1_sjf':
+            sjf_jobs.append(random.expovariate(SERV_RATE))
+            sjf_jobs = insertionsort(sjf_jobs)
+        c = customer(env, counters, serv_dist, sjf_jobs, name="customer_%s"%i)
         env.process(c)
         t = random.expovariate(ARR_RATE/len(counters))  # divide by len(counters) to obtain n-fold lower arr. rate
         yield env.timeout(t)
@@ -40,20 +60,24 @@ def source(env, number, counters, serv_dist):
 def no_in_sys(r):
     return max([0, len(r.put_queue) + len(r.users)])
 
-def customer(env, counters, serv_dist, name):
+def customer(env, counters, serv_dist, sjf_jobs, name):
     """Customer arrives, waits, is served and leaves."""
     arrive = env.now
     #print('%s arrives at %s' %(name, arrive))
     queue_length = [no_in_sys(counters[i]) for i in range(len(counters))]
     #print('queue length: ', queue_length)
     choice = 0
+
+    # Pick queue with shortest length:
     for i in range(len(queue_length)):
         if queue_length[i] == 0 or queue_length[i] == min(queue_length):
-            choice = i  # the chosen queue number
+            choice = i
             break
+
     # wait till counter becomes available:
     with counters[choice].request() as req:
         yield req
+        #print('queue:', counters[choice].queue)
         #print('Queue size: ', len(counters[choice].queue))
         wait = env.now - arrive
         #print('%s has waited %s seconds' % (name, wait ))
@@ -67,20 +91,21 @@ def customer(env, counters, serv_dist, name):
                 tib = random.expovariate(1.0 / 1.0) # avg service time of 1.0
             else:
                 tib = random.expovariate(1.0 / 5.0) # avg service time of 5.0
+        elif serv_dist == 'MM1_sjf':
+            tib = sjf_jobs[0]
+            sjf_jobs.pop()
         yield env.timeout(tib)
         end = env.now
-        #print('%s got finished at %s' % (name, end))
         service_time = tib
         sojourn_time = tib + wait
-        dists["M%s%s" % (serv_dist, len(counters))]['wait_times'].append(wait)
-        dists["M%s%s" % (serv_dist, len(counters))]['serv_times'].append(service_time)
-        dists["M%s%s" % (serv_dist, len(counters))]['soj_times'].append(sojourn_time)
+        if serv_dist == 'MM1_sjf':
+            dists["MM1_sjf"]['wait_times'].append(wait)
+        else:
+            dists["M%s%s" % (serv_dist, len(counters))]['wait_times'].append(wait)
         return
-        #print('%7.4f %s: Sojourn Time' % (end-arrive, name))
-        #print('%7.4f %s: Finished' % (env.now, name))
 
 
-def run_simulation(capacities, service_dis):
+def run_analytical_simulation(capacities):
     es_list = []
     wait_list = []
     # Run the analytical solution once per cap
@@ -97,41 +122,74 @@ def run_simulation(capacities, service_dis):
         print('-------------------')
         es_list.append(es)
         wait_list.append(wait_time)
-
-        # Run the simulations for every cap and service dist
-        for sd in service_dis:
-            random.seed(RANDOM_SEED)
-            env = simpy.Environment()
-            counters = []
-            for i in range(cap):
-                counters.append(Resource(env))
-            env.process(source(env, NEW_CUSTOMERS, counters, serv_dist=sd))
-            env.run()
     return es_list, wait_list
+
+def run_simulation(capacities, service_dis):
+    # Run the analytical solution once per cap
+    for sd in tqdm(service_dis):
+        for cap in capacities:
+            print('simulating M%s%s'%(sd, cap))
+            print('--------')
+            # Run the simulations 100 times for every cap and service dist
+            for i in range(SAMPLE_SIZE_SIM):
+                env = simpy.Environment()
+                counters = []
+                for i in range(cap):
+                    counters.append(Resource(env))
+                env.process(source(env, NEW_CUSTOMERS, counters, serv_dist=sd))
+                env.run()
+                if sd == 'MM1_sjf':
+                    ew_mean = st.mean(dists['MM1_sjf']['wait_times'])
+                    dists['MM1_sjf']['mean_w_times'].append(ew_mean)
+                    dists['MM1_sjf']['wait_times'] = []
+                else:
+                    ew_mean = st.mean(dists["M%s%s" % (sd, cap)]['wait_times'])
+                    dists["M%s%s" % (sd, cap)]['mean_w_times'].append(ew_mean)
+                    #Empty wait times again for next run
+                    dists["M%s%s" % (sd, cap)]['wait_times'] = []
+            if sd == 'MM1_sjf':
+                break
+    return
 
 def plot_functions(results, capacities, metrics, service_dis):
     print('Plotting ....')
     for met in tqdm(metrics):
-        for cap in capacities:
-            for sd in service_dis:
+        for sd in service_dis:
+            for cap in capacities:
                 plt.clf()
-                ax = sns.displot(results['M%s%s'%(sd, cap)][met], label='n=%s'%cap)
+                if sd == "MM1_sjf":
+                    ax = sns.displot(results["MM1_sjf"][met], label='n=%s' % cap)
+                else:
+                    ax = sns.displot(results['M%s%s'%(sd, cap)][met], label='n=%s'%cap)
                 ax.set(xlabel='%s'%met, ylabel=('Frequency'))
                 plt.tight_layout()
                 if not os.path.exists('displots/M%s%s'%(sd, cap)):
                     os.makedirs('displots/M%s%s'%(sd, cap))
                 plt.savefig('displots/M%s%s/%s_n_%s.jpg' %(sd, cap, met, NEW_CUSTOMERS))
                 plt.close()
+                if sd == "MM1_sjf":
+                    break
     return
 
 def get_stats(results, capacities, metrics, service_dis):
-    for cap in capacities:
+    for sd in service_dis:
         for met in metrics:
-            for sd in service_dis:
-                cap_met = results['M%s%s'%(sd, cap)][met]
-                results['M%s%s'%(sd, cap)]['mean_%s' %met] = st.mean(cap_met)
-                results['M%s%s'%(sd, cap)]['max_%s' %met] = max(cap_met)
-                print('mean M%s%s, met %s: %s'%(sd, cap, met, st.mean(cap_met)))
+            for cap in capacities:
+                if sd == 'MM1_sjf':
+                    cap_met = results['MM1_sjf'][met]
+                    results['MM1_sjf']['mean_%s' % met] = st.mean(cap_met)
+                    results['MM1_sjf']['stdev_%s' % met] = st.stdev(cap_met)
+                    results['MM1_sjf']['max_%s' % met] = max(cap_met)
+                    results['MM1_sjf']['min_%s' % met] = min(cap_met)
+                    print('mean MM1_sjf, met %s: %s' % (met, st.mean(cap_met)))
+                    break
+                else:
+                    cap_met = results['M%s%s'%(sd, cap)][met]
+                    results['M%s%s'%(sd, cap)]['mean_%s' %met] = st.mean(cap_met)
+                    results['M%s%s' % (sd, cap)]['stdev_%s' % met] = st.stdev(cap_met)
+                    results['M%s%s'%(sd, cap)]['max_%s' %met] = max(cap_met)
+                    results['M%s%s' % (sd, cap)]['min_%s' % met] = min(cap_met)
+                    print('mean M%s%s, met %s: %s'%(sd, cap, met, st.mean(cap_met)))
     file_to_write = open("stats.pickle", "wb")
     pkl.dump(results, file_to_write)
     file_to_write.close()
@@ -141,7 +199,7 @@ def make_table(file):
     infile = open(file, 'rb')
     stats = pkl.load(infile)
     df = pd.DataFrame.from_dict(stats)
-    df = df.drop(['wait_times', 'serv_times', 'soj_times'])
+    df = df.drop(['mean_w_times'])
     df2 = df.transpose()
     print(df2)
     df2.to_excel("output.xlsx")
@@ -149,63 +207,55 @@ def make_table(file):
 
 # Define domains to simulate
 capacities = [1, 2, 4]
-service_dis = ['M', 'D', 'H']
-metrics = ['wait_times', 'serv_times', 'soj_times']
+service_dis = ['MM1_sjf', 'M', 'D', 'H']
+metrics = ['mean_w_times']
 dists = {
     'MM1' : {
         'wait_times' : [],
-        'serv_times' : [],
-        'soj_times' : []
+        'mean_w_times': []
     },
     'MM2' : {
         'wait_times' : [],
-        'serv_times' : [],
-        'soj_times' : []
+        'mean_w_times': []
     },
     'MM4' : {
         'wait_times' : [],
-        'serv_times' : [],
-        'soj_times' : []
+        'mean_w_times': []
     },
-    'MM1_short_job_first' :{
+    'MM1_sjf' :{
         'wait_times' : [],
-        'serv_times' : [],
-        'soj_times' : []
+        'mean_w_times': []
     },
     'MD1' : {
         'wait_times' : [],
-        'serv_times' : [],
-        'soj_times' : []
+        'mean_w_times': []
     },
     'MD2' : {
         'wait_times' : [],
-        'serv_times' : [],
-        'soj_times' : []
+        'mean_w_times': []
     },
     'MD4' : {
         'wait_times' : [],
-        'serv_times' : [],
-        'soj_times' : []
+        'mean_w_times': []
     },
     'MH1': {
         'wait_times' : [],
-        'serv_times' : [],
-        'soj_times' : []
+        'mean_w_times': []
     },
     'MH2': {
         'wait_times' : [],
-        'serv_times' : [],
-        'soj_times' : []
+        'mean_w_times': []
     },
     'MH4': {
         'wait_times' : [],
-        'serv_times' : [],
-        'soj_times' : []
+        'mean_w_times': []
     }}
 
 
 # The script subsections, comment out for partial run.
-es_list, wait_list = run_simulation(capacities, service_dis)
+random.seed(RANDOM_SEED)
+es_list, wait_list = run_analytical_simulation(capacities)
+run_simulation(capacities, service_dis)
 plot_functions(dists, capacities, metrics, service_dis)
 get_stats(dists, capacities, metrics, service_dis)
 make_table("stats.pickle")
