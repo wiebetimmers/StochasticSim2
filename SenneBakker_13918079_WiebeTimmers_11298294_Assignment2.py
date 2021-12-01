@@ -1,13 +1,15 @@
 import random
 import os
-from tqdm import tqdm
-import statistics as st
-from simpy import *
 import simpy
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle as pkl
 import pandas as pd
+import statistics as st
+from tqdm import tqdm
+from simpy import *
+from scipy import stats
+
 fig = plt.figure(figsize=(6,4), dpi=300)
 
 # sources
@@ -15,21 +17,12 @@ fig = plt.figure(figsize=(6,4), dpi=300)
 # https://simpy.readthedocs.io/en/latest/examples/bank_renege.html
 # https://www.programiz.com/dsa/insertion-sort
 
-SAMPLE_SIZE_SIM = 100
-RANDOM_SEED = 12345
-NEW_CUSTOMERS = 10000 # Total number of customers
-INTERVAL_CUSTOMERS = 10.0  # Generate new customers roughly every x seconds
-INTERVAL_SERVICE = 9.5 # Service takes roughly 10 seconds of time
-
-ARR_RATE = 1/INTERVAL_CUSTOMERS  #lambda
-SERV_RATE = 1/INTERVAL_SERVICE   #mu
 
 def system_load(n):
     # We assume the same load characteristics for every experiment:
     # This means the arrival rate is set to be n-fold lower.
     p = (ARR_RATE*n) / (n*SERV_RATE)
     return p
-
 
 def insertionsort(array):
     for step in range(1, len(array)):
@@ -54,7 +47,7 @@ def source(env, number, counters, serv_dist):
             sjf_jobs = insertionsort(sjf_jobs)
         c = customer(env, counters, serv_dist, sjf_jobs, name="customer_%s"%i)
         env.process(c)
-        t = random.expovariate(ARR_RATE/len(counters))  # divide by len(counters) to obtain n-fold lower arr. rate
+        t = random.expovariate(ARR_RATE*len(counters))  # multiply by n , to keep system load constant
         yield env.timeout(t)
 
 def no_in_sys(r):
@@ -88,28 +81,24 @@ def customer(env, counters, serv_dist, sjf_jobs, name):
         elif serv_dist == 'H':
             determiner = random.uniform(0,1)
             if determiner <= 0.75:
-                tib = random.expovariate(1.0 / 1.0) # avg service time of 1.0
-            else:
                 tib = random.expovariate(1.0 / 5.0) # avg service time of 5.0
+            else:
+                tib = random.expovariate(1.0 / 10.0) # avg service time of 10.0 - jobs that just take  longer
         elif serv_dist == 'MM1_sjf':
             tib = sjf_jobs[0]
             sjf_jobs.pop()
         yield env.timeout(tib)
-        end = env.now
-        service_time = tib
-        sojourn_time = tib + wait
         if serv_dist == 'MM1_sjf':
             dists["MM1_sjf"]['wait_times'].append(wait)
         else:
             dists["M%s%s" % (serv_dist, len(counters))]['wait_times'].append(wait)
         return
 
-
 def run_analytical_simulation(capacities):
     es_list = []
     wait_list = []
     # Run the analytical solution once per cap
-    for cap in tqdm(capacities):
+    for cap in capacities:
         p = system_load(cap)
         el = (p) / (1 - p)
         es = (1 / (SERV_RATE * cap)) / (1 - p)
@@ -128,7 +117,7 @@ def run_simulation(capacities, service_dis):
     # Run the analytical solution once per cap
     for sd in tqdm(service_dis):
         for cap in capacities:
-            print('simulating M%s%s'%(sd, cap))
+            print('\nsimulating M%s%s'%(sd, cap))
             print('--------')
             # Run the simulations 100 times for every cap and service dist
             for i in range(SAMPLE_SIZE_SIM):
@@ -149,18 +138,25 @@ def run_simulation(capacities, service_dis):
                     dists["M%s%s" % (sd, cap)]['wait_times'] = []
             if sd == 'MM1_sjf':
                 break
+
+    file_to_write = open("data.pickle", "wb")
+    pkl.dump(dists, file_to_write)
+    file_to_write.close()
     return
 
 def plot_functions(results, capacities, metrics, service_dis):
+    boxplotdict = {}
     print('Plotting ....')
-    for met in tqdm(metrics):
+    for met in metrics:
         for sd in service_dis:
             for cap in capacities:
                 plt.clf()
                 if sd == "MM1_sjf":
                     ax = sns.displot(results["MM1_sjf"][met], label='n=%s' % cap)
+                    boxplotdict["MM1_sjf"] = results["MM1_sjf"][met]
                 else:
                     ax = sns.displot(results['M%s%s'%(sd, cap)][met], label='n=%s'%cap)
+                    boxplotdict['M%s%s'%(sd, cap)] = results['M%s%s'%(sd, cap)][met]
                 ax.set(xlabel='%s'%met, ylabel=('Frequency'))
                 plt.tight_layout()
                 if not os.path.exists('displots/M%s%s'%(sd, cap)):
@@ -169,6 +165,23 @@ def plot_functions(results, capacities, metrics, service_dis):
                 plt.close()
                 if sd == "MM1_sjf":
                     break
+
+    fig, ax = plt.subplots()
+    plt.ylabel('Average Waiting Time')
+    plt.xlabel('Method')
+    ax.boxplot(boxplotdict.values())
+    ax.set_xticklabels(boxplotdict.keys())
+    plt.savefig('boxplot_all.jpg')
+    return
+
+def plot_analytic_result(es_list, wait_list):
+    plt.clf()
+    plt.plot(capacities, es_list, label='E(S)')
+    plt.plot(capacities, wait_list, label='E(W)')
+    plt.legend()
+    plt.xlabel('Capacity')
+    plt.ylabel('Time')
+    plt.savefig('ew_es_plot.jpg')
     return
 
 def get_stats(results, capacities, metrics, service_dis):
@@ -195,11 +208,27 @@ def get_stats(results, capacities, metrics, service_dis):
     file_to_write.close()
     return
 
+def do_stat_test(file):
+    methods = pd.Series(['MM1', 'MM2', 'MM4', 'MM1_sjf', 'MD1', 'MD2', 'MD4', 'MH1', 'MH2', 'MH4'])
+    infile = open(file, 'rb')
+    data = pkl.load(infile)
+    # fill in p.value for every combination, we do a Welsh t-test and test if the samples are different
+    # We set our p crit value to 0.01
+    # H0: method x mean = method y mean
+    # H1: method x mean != method y mean
+    df = pd.DataFrame(methods.apply(lambda x: methods.apply(lambda y: (stats.ttest_ind(data[x]['mean_w_times'],
+                                                                                      data[y]['mean_w_times'],
+                                                                                      equal_var=False)[1]))))
+    df.index = methods
+    df.columns = methods
+    df.to_excel('stat_test_output.xlsx')
+    return
+
 def make_table(file):
     infile = open(file, 'rb')
-    stats = pkl.load(infile)
-    df = pd.DataFrame.from_dict(stats)
-    df = df.drop(['mean_w_times'])
+    data = pkl.load(infile)
+    df = pd.DataFrame.from_dict(data)
+    df = df.drop(['wait_times', 'mean_w_times'])
     df2 = df.transpose()
     print(df2)
     df2.to_excel("output.xlsx")
@@ -251,19 +280,29 @@ dists = {
         'mean_w_times': []
     }}
 
+# Parameters
+SAMPLE_SIZE_SIM = 1000   # no simulation to obtain a distribution of E(w)
+RANDOM_SEED = 12345
+NEW_CUSTOMERS = 10000 # Total number of customers
+INTERVAL_CUSTOMERS = 10.0  # Generate new customers roughly every x seconds
+INTERVAL_SERVICE = 9.5 # Service takes roughly 9.5 seconds of time
+
+ARR_RATE = 1/INTERVAL_CUSTOMERS  #lambda
+SERV_RATE = 1/INTERVAL_SERVICE   #mu
 
 # The script subsections, comment out for partial run.
-random.seed(RANDOM_SEED)
-es_list, wait_list = run_analytical_simulation(capacities)
-run_simulation(capacities, service_dis)
-plot_functions(dists, capacities, metrics, service_dis)
-get_stats(dists, capacities, metrics, service_dis)
-make_table("stats.pickle")
+if __name__ == '__main__':
+    # Run simulations
+    random.seed(RANDOM_SEED)
+    es_list, wait_list = run_analytical_simulation(capacities)
+    plot_analytic_result(es_list, wait_list)
+    run_simulation(capacities, service_dis)
 
-plt.clf()
-plt.plot(capacities, es_list, label='E(S)')
-plt.plot(capacities, wait_list, label='E(W)')
-plt.legend()
-plt.xlabel('Capacity')
-plt.ylabel('Time')
-plt.savefig('ew_es_plot.jpg')
+    # Process result data
+    infile = open("data.pickle", 'rb')
+    data = pkl.load(infile)
+    plot_functions(data, capacities, metrics, service_dis)
+    get_stats(data, capacities, metrics, service_dis)
+    make_table("stats.pickle")
+    do_stat_test("stats.pickle")
+
