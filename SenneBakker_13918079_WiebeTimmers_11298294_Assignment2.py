@@ -156,7 +156,7 @@ def plot_boxplots(bpdict):
         plt.ylabel('Average Waiting Time')
         plt.xlabel('Method')
         #for c in cap1:
-        ax.boxplot(i.values(), showfliers=False)
+        ax.boxplot(i.values(), showfliers=False, patch_artist=True)
         ax.set_xticklabels(i.keys())
         plt.savefig('boxplot_%s.jpg'%str(names[count]))
         plt.close()
