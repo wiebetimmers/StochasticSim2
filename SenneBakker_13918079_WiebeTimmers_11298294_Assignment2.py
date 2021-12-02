@@ -12,8 +12,7 @@ from scipy import stats
 
 fig = plt.figure(figsize=(6,4), dpi=300)
 
-# sources
-# https://medium.com/swlh/simulating-a-parallel-queueing-system-with-simpy-6b7fcb6b1ca1
+# Sources for inspiration
 # https://simpy.readthedocs.io/en/latest/examples/bank_renege.html
 # https://www.programiz.com/dsa/insertion-sort
 
@@ -83,10 +82,10 @@ def customer(env, counters, serv_dist, sjf_jobs, name):
             if determiner <= 0.75:
                 tib = random.expovariate(1.0 / 5.0) # avg service time of 5.0
             else:
-                tib = random.expovariate(1.0 / 10.0) # avg service time of 10.0 - jobs that just take  longer
+                tib = random.expovariate(1.0 / 15.0) # avg service time of 15.0 - jobs that just take  longer
         elif serv_dist == 'MM1_sjf':
             tib = sjf_jobs[0]
-            sjf_jobs.pop()
+            sjf_jobs.pop(0)
         yield env.timeout(tib)
         if serv_dist == 'MM1_sjf':
             dists["MM1_sjf"]['wait_times'].append(wait)
@@ -144,6 +143,26 @@ def run_simulation(capacities, service_dis):
     file_to_write.close()
     return
 
+def plot_boxplots(bpdict):
+    dictfilt = lambda x, y: dict([(i, x[i]) for i in x if i in set(y)])
+    cap1 = dictfilt(bpdict, ['MM1','MM1_sjf','MD1','MH1'])
+    cap2 = dictfilt(bpdict, ['MM2', 'MD2', 'MH2'])
+    cap4 = dictfilt(bpdict, ['MM4', 'MD4', 'MH4'])
+
+    names = ['cap1', 'cap2', 'cap4']
+    count = 0
+    for i in [cap1, cap2, cap4]:
+        fig, ax = plt.subplots()
+        plt.ylabel('Average Waiting Time')
+        plt.xlabel('Method')
+        #for c in cap1:
+        ax.boxplot(i.values(), showfliers=False)
+        ax.set_xticklabels(i.keys())
+        plt.savefig('boxplot_%s.jpg'%str(names[count]))
+        plt.close()
+        count +=1
+    return
+
 def plot_functions(results, capacities, metrics, service_dis):
     boxplotdict = {}
     print('Plotting ....')
@@ -159,19 +178,12 @@ def plot_functions(results, capacities, metrics, service_dis):
                     boxplotdict['M%s%s'%(sd, cap)] = results['M%s%s'%(sd, cap)][met]
                 ax.set(xlabel='%s'%met, ylabel=('Frequency'))
                 plt.tight_layout()
-                if not os.path.exists('displots/M%s%s'%(sd, cap)):
-                    os.makedirs('displots/M%s%s'%(sd, cap))
-                plt.savefig('displots/M%s%s/%s_n_%s.jpg' %(sd, cap, met, NEW_CUSTOMERS))
+                plt.savefig('displots/M%s%s_%s_n_%s.jpg' %(sd, cap, met, NEW_CUSTOMERS))
                 plt.close()
                 if sd == "MM1_sjf":
                     break
 
-    fig, ax = plt.subplots()
-    plt.ylabel('Average Waiting Time')
-    plt.xlabel('Method')
-    ax.boxplot(boxplotdict.values())
-    ax.set_xticklabels(boxplotdict.keys())
-    plt.savefig('boxplot_all.jpg')
+    plot_boxplots(boxplotdict)
     return
 
 def plot_analytic_result(es_list, wait_list):
