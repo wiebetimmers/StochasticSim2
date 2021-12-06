@@ -17,5 +17,5 @@
 ### in line range 306 - 319 the main structure of the script execution is noted. A distinction between the analtical and DES simulation has been made. 
 
 ### Code inspiration sources:
-https://simpy.readthedocs.io/en/latest/examples/bank_renege.html
-https://www.programiz.com/dsa/insertion-sort
+- https://simpy.readthedocs.io/en/latest/examples/bank_renege.html
+- https://www.programiz.com/dsa/insertion-sort
