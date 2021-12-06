@@ -12,11 +12,6 @@ from scipy import stats
 
 fig = plt.figure(figsize=(6,4), dpi=300)
 
-# Sources for inspiration
-# https://simpy.readthedocs.io/en/latest/examples/bank_renege.html
-# https://www.programiz.com/dsa/insertion-sort
-
-
 def system_load(n):
     # We assume the same load characteristics for every experiment:
     # This means the arrival rate is set to be n-fold lower.
@@ -304,10 +299,13 @@ SERV_RATE = 1/INTERVAL_SERVICE   #mu
 
 # The script subsections, comment out for partial run.
 if __name__ == '__main__':
-    # Run simulations
     random.seed(RANDOM_SEED)
+
+    # Run analytic solution
     es_list, wait_list = run_analytical_simulation(capacities)
     plot_analytic_result(es_list, wait_list, capacities)
+
+    # Run DES solution
     run_simulation(capacities, service_dis)
 
     # Process result data
