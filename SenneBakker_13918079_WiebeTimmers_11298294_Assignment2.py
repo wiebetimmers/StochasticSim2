@@ -186,14 +186,14 @@ def plot_functions(results, capacities, metrics, service_dis):
     plot_boxplots(boxplotdict)
     return
 
-def plot_analytic_result(es_list, wait_list):
-    plt.clf()
+def plot_analytic_result(es_list, wait_list, capacities):
     plt.plot(capacities, es_list, label='E(S)')
     plt.plot(capacities, wait_list, label='E(W)')
-    plt.legend()
     plt.xlabel('Capacity')
     plt.ylabel('Time')
-    plt.savefig('ew_es_plot.jpg')
+    plt.legend()
+    plt.savefig('analytic.jpg')
+    plt.close()
     return
 
 def get_stats(results, capacities, metrics, service_dis):
@@ -307,7 +307,7 @@ if __name__ == '__main__':
     # Run simulations
     random.seed(RANDOM_SEED)
     es_list, wait_list = run_analytical_simulation(capacities)
-    plot_analytic_result(es_list, wait_list)
+    plot_analytic_result(es_list, wait_list, capacities)
     run_simulation(capacities, service_dis)
 
     # Process result data
